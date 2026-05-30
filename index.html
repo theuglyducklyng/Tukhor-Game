@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tukhor Run!</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    font-family: 'Courier New', monospace;
+    color: #fff;
+    overflow: hidden;
+  }
+  h1 {
+    font-size: 2rem;
+    letter-spacing: 4px;
+    color: #e94560;
+    margin-bottom: 10px;
+    text-shadow: 0 0 20px #e9456066;
+  }
+  #ui {
+    display: flex;
+    gap: 40px;
+    margin-bottom: 16px;
+    font-size: 1rem;
+    color: #aaa;
+    letter-spacing: 2px;
+  }
+  #ui span { color: #fff; font-weight: bold; }
+  #gameCanvas {
+    border: 2px solid #e94560;
+    border-radius: 10px;
+    background: #0f3460;
+    box-shadow: 0 0 40px #e9456044;
+    display: block;
+  }
+  #msg {
+    margin-top: 18px;
+    font-size: 1rem;
+    color: #e94560;
+    letter-spacing: 3px;
+    min-height: 24px;
+    text-align: center;
+  }
+  #subMsg {
+    font-size: 0.75rem;
+    color: #888;
+    letter-spacing: 2px;
+    margin-top: 6px;
+    min-height: 18px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<h1>🦖 TUKHOR RUN</h1>
+<div id="ui">SCORE: <span id="scoreVal">0</span> &nbsp;&nbsp; HI: <span id="hiVal">0</span></div>
+<canvas id="gameCanvas" width="800" height="260"></canvas>
+<audio id="bgm" src="bgm.wav" loop></audio>
+<div id="msg">PRESS SPACE / TAP TO START</div>
+<div id="subMsg">SPACE or ↑ to jump &nbsp;|&nbsp; DOUBLE JUMP allowed</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const GROUND = H - 42;
+
+let tukhorImg = new Image();
+tukhorImg.src = 'Tukhor.png';
+let imgLoaded = false;
+tukhorImg.onload = () => imgLoaded = true;
+tukhorImg.onerror = () => imgLoaded = false;
+
+let state = 'idle'; // idle, running, dead
+let score = 0, hiScore = 0, frame = 0, speed = 4;
+let animFrame;
+
+const player = {
+  x: 80, y: GROUND, w: 80, h: 95,
+  vy: 0, onGround: true, jumps: 0,
+  jump() {
+    if (this.jumps < 2) {
+      this.vy = -14;
+      this.onGround = false;
+      this.jumps++;
+    }
+  }
+};
+
+let obstacles = [];
+let clouds = [
+  { x: 200, y: 40, w: 80, h: 28 },
+  { x: 520, y: 70, w: 60, h: 20 },
+  { x: 750, y: 30, w: 100, h: 32 },
+];
+let stars = Array.from({ length: 40 }, () => ({
+  x: Math.random() * W,
+  y: Math.random() * (GROUND - 60),
+  r: Math.random() * 1.5 + 0.5,
+  t: Math.random() * Math.PI * 2
+}));
+
+const bgm = document.getElementById('bgm');
+bgm.volume = 0.5;
+
+let birthdayAlpha = 0, birthdayActive = false;
+let confetti = [];
+let heartParticles = [];
+
+function spawnBirthdayFX() {
+  confetti = Array.from({ length: 80 }, () => ({
+    x: Math.random() * W,
+    y: -10 - Math.random() * 80,
+    vx: (Math.random() - 0.5) * 2.5,
+    vy: 1.5 + Math.random() * 2.5,
+    w: 6 + Math.random() * 8,
+    h: 4 + Math.random() * 5,
+    angle: Math.random() * Math.PI * 2,
+    spin: (Math.random() - 0.5) * 0.18,
+    color: ['#ff6b9d','#ffd700','#a78bfa','#34d399','#f97316','#60a5fa','#f472b6'][Math.floor(Math.random()*7)]
+  }));
+  heartParticles = Array.from({ length: 18 }, () => ({
+    x: 60 + Math.random() * (W - 120),
+    y: 60 + Math.random() * 80,
+    size: 14 + Math.random() * 22,
+    alpha: 0,
+    delay: Math.random() * 60,
+    pulse: Math.random() * Math.PI * 2
+  }));
+}
+
+function drawHeart(x, y, size, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#ff6b9d';
+  ctx.beginPath();
+  ctx.moveTo(x, y + size * 0.3);
+  ctx.bezierCurveTo(x, y, x - size * 0.5, y, x - size * 0.5, y + size * 0.3);
+  ctx.bezierCurveTo(x - size * 0.5, y + size * 0.65, x, y + size * 0.9, x, y + size);
+  ctx.bezierCurveTo(x, y + size * 0.9, x + size * 0.5, y + size * 0.65, x + size * 0.5, y + size * 0.3);
+  ctx.bezierCurveTo(x + size * 0.5, y, x, y, x, y + size * 0.3);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBirthdayOverlay() {
+  if (!birthdayActive) return;
+  birthdayAlpha = Math.min(birthdayAlpha + 0.025, 1);
+
+  confetti.forEach(c => {
+    c.x += c.vx; c.y += c.vy; c.angle += c.spin;
+    if (c.y > H + 10) { c.y = -10; c.x = Math.random() * W; }
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.angle);
+    ctx.fillStyle = c.color;
+    ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+    ctx.restore();
+  });
+
+  heartParticles.forEach(h => {
+    if (h.delay > 0) { h.delay--; return; }
+    h.pulse += 0.04;
+    h.alpha = Math.min(h.alpha + 0.03, 0.55 + 0.2 * Math.sin(h.pulse));
+    drawHeart(h.x - h.size / 2, h.y - h.size / 2, h.size, h.alpha);
+  });
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(birthdayAlpha * 1.4, 0.92);
+
+  const grad = ctx.createLinearGradient(0, H * 0.18, 0, H * 0.72);
+  grad.addColorStop(0, 'rgba(20,10,40,0.82)');
+  grad.addColorStop(1, 'rgba(10,5,30,0.72)');
+  ctx.fillStyle = grad;
+  const bx = W * 0.08, bw = W * 0.84, by = H * 0.18, bh = H * 0.56;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 18);
+  ctx.fill();
+  ctx.strokeStyle = '#ff6b9d';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(birthdayAlpha * 1.6, 1);
+  ctx.textAlign = 'center';
+
+  ctx.font = 'bold 13px Courier New';
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText('🎂  ✨  🎉  🎈  🎁  ✨  🎂', W / 2, H * 0.31);
+
+  const pulse = 1 + 0.04 * Math.sin(frame * 0.07);
+  ctx.save();
+  ctx.translate(W / 2, H * 0.44);
+  ctx.scale(pulse, pulse);
+  ctx.font = 'bold 32px Georgia, serif';
+  const tg = ctx.createLinearGradient(-160, 0, 160, 0);
+  tg.addColorStop(0, '#ffd700');
+  tg.addColorStop(0.4, '#ff6b9d');
+  tg.addColorStop(0.7, '#a78bfa');
+  tg.addColorStop(1, '#ffd700');
+  ctx.fillStyle = tg;
+  ctx.shadowColor = '#ff6b9d';
+  ctx.shadowBlur = 18;
+  ctx.fillText('Happy Birthday', 0, 0);
+  ctx.restore();
+
+  ctx.font = 'bold 38px Georgia, serif';
+  const ng = ctx.createLinearGradient(-100, 0, 100, 0);
+  ng.addColorStop(0, '#ffd700');
+  ng.addColorStop(0.5, '#fff');
+  ng.addColorStop(1, '#ffd700');
+  ctx.fillStyle = ng;
+  ctx.shadowColor = '#ffd700';
+  ctx.shadowBlur = 24;
+  ctx.fillText('Tukhor! 🎀', W / 2, H * 0.56);
+  ctx.shadowBlur = 0;
+
+  ctx.font = '13px Courier New';
+  ctx.fillStyle = '#aaa';
+  ctx.fillText('SPACE / TAP to play again', W / 2, H * 0.68);
+
+  ctx.textAlign = 'left';
+  ctx.restore();
+}
+
+
+
+let nextObstacle = 90;
+let runLeg = false, legTimer = 0;
+
+function spawnObstacle() {
+  const type = Math.random();
+  if (type < 0.55) {
+    const h = 30 + Math.random() * 40;
+    obstacles.push({ x: W + 10, y: GROUND - h + 8, w: 22 + Math.random() * 14, h, type: 'cactus' });
+  } else if (type < 0.8) {
+    const gap = 18 + Math.random() * 20;
+    const h1 = 28 + Math.random() * 30, h2 = 22 + Math.random() * 30;
+    obstacles.push({ x: W + 10, y: GROUND - h1 + 8, w: 18, h: h1, type: 'cactus' });
+    obstacles.push({ x: W + 10 + gap, y: GROUND - h2 + 8, w: 18, h: h2, type: 'cactus' });
+  } else {
+    obstacles.push({ x: W + 10, y: GROUND - 80 - Math.random() * 40, w: 44, h: 22, type: 'pterodactyl', flap: 0 });
+  }
+}
+
+function drawGround() {
+  ctx.fillStyle = '#1b4068';
+  ctx.fillRect(0, GROUND + 8, W, H - GROUND - 8);
+  ctx.strokeStyle = '#2a5a8a';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, GROUND + 8); ctx.lineTo(W, GROUND + 8); ctx.stroke();
+  for (let i = 0; i < 20; i++) {
+    const rx = ((frame * speed * 0.4 + i * 45) % (W + 10)) - 5;
+    ctx.fillStyle = '#2a5a8a';
+    ctx.fillRect(rx, GROUND + 14, 30 + Math.random() * 0, 3);
+  }
+}
+
+function drawStars() {
+  stars.forEach(s => {
+    s.t += 0.03;
+    const alpha = 0.4 + 0.4 * Math.sin(s.t);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawCloud(c) {
+  ctx.fillStyle = 'rgba(100,160,220,0.18)';
+  ctx.beginPath();
+  ctx.ellipse(c.x, c.y, c.w / 2, c.h / 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(c.x - c.w * 0.2, c.y + 4, c.w * 0.3, c.h * 0.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(c.x + c.w * 0.2, c.y + 6, c.w * 0.35, c.h * 0.45, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPlayer() {
+  const px = player.x, py = player.y;
+  if (imgLoaded) {
+    ctx.drawImage(tukhorImg, px - player.w / 2, py - player.h + 8, player.w, player.h);
+  } else {
+    drawFallbackPlayer(px, py);
+  }
+}
+
+function drawFallbackPlayer(px, py) {
+  const bx = px - player.w / 2, by = py - player.h;
+  ctx.fillStyle = '#e94560';
+  ctx.fillRect(bx + 12, by, 28, 28);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(bx + 20, by + 6, 8, 8);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(bx + 22, by + 8, 4, 4);
+  ctx.fillStyle = '#e94560';
+  ctx.fillRect(bx + 14, by + 28, 24, 18);
+  ctx.fillStyle = '#c73652';
+  const legOff = runLeg ? 4 : 0;
+  ctx.fillRect(bx + 18, by + 46, 10, 14 + legOff);
+  ctx.fillRect(bx + 30, by + 46, 10, 14 - legOff);
+  ctx.fillStyle = '#e94560';
+  ctx.fillRect(bx + 4, by + 14, 12, 8);
+}
+
+function drawObstacle(o) {
+  if (o.type === 'cactus') {
+    const gradient = ctx.createLinearGradient(o.x, o.y, o.x + o.w, o.y + o.h);
+    gradient.addColorStop(0, '#22c55e');
+    gradient.addColorStop(1, '#16a34a');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.roundRect(o.x, o.y, o.w, o.h, 4);
+    ctx.fill();
+    ctx.fillStyle = '#15803d';
+    ctx.fillRect(o.x + o.w * 0.4, o.y + 4, 3, o.h * 0.5);
+    const armH = Math.min(o.h * 0.35, 20);
+    ctx.fillStyle = '#22c55e';
+    ctx.beginPath();
+    ctx.roundRect(o.x - 8, o.y + armH, 10, 8, 3);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.roundRect(o.x + o.w - 2, o.y + armH + 8, 10, 8, 3);
+    ctx.fill();
+    ctx.fillStyle = '#86efac';
+    ctx.beginPath();
+    ctx.arc(o.x + o.w / 2, o.y + 3, 5, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    o.flap += 0.15;
+    const flapY = Math.sin(o.flap) * 5;
+    ctx.fillStyle = '#f97316';
+    ctx.beginPath();
+    ctx.ellipse(o.x + 22, o.y + 11 + flapY, 22, 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c2410c';
+    ctx.beginPath();
+    const wingFlap = Math.sin(o.flap) * 8;
+    ctx.ellipse(o.x + 10, o.y + flapY - wingFlap, 14, 7, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(o.x + 34, o.y + flapY - wingFlap, 14, 7, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(o.x + 30, o.y + 8 + flapY, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(o.x + 31, o.y + 8 + flapY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fdba74';
+    ctx.beginPath();
+    ctx.moveTo(o.x + 38, o.y + 10 + flapY);
+    ctx.lineTo(o.x + 44, o.y + 13 + flapY);
+    ctx.lineTo(o.x + 38, o.y + 16 + flapY);
+    ctx.fill();
+  }
+}
+
+function checkCollision(o) {
+  const px = player.x - player.w / 2 + 8;
+  const py = player.y - player.h + 8;
+  const pw = player.w - 16, ph = player.h - 10;
+  const margin = 6;
+  return (
+    px + pw > o.x + margin &&
+    px < o.x + o.w - margin &&
+    py + ph > o.y + margin &&
+    py < o.y + o.h - margin
+  );
+}
+
+function reset() {
+  player.y = GROUND;
+  player.vy = 0;
+  player.onGround = true;
+  player.jumps = 0;
+  obstacles = [];
+  score = 0;
+  speed = 4;
+  frame = 0;
+  nextObstacle = 90;
+  runLeg = false;
+  legTimer = 0;
+}
+
+function update() {
+  if (state !== 'running') return;
+  frame++;
+  score++;
+  speed = 4 + Math.floor(score / 300) * 0.5;
+
+  legTimer++;
+  if (legTimer > 8) { runLeg = !runLeg; legTimer = 0; }
+
+  player.vy += 0.7;
+  player.y += player.vy;
+  if (player.y >= GROUND) {
+    player.y = GROUND;
+    player.vy = 0;
+    player.onGround = true;
+    player.jumps = 0;
+  }
+
+  clouds.forEach(c => {
+    c.x -= speed * 0.3;
+    if (c.x + c.w < 0) c.x = W + c.w;
+  });
+
+  nextObstacle--;
+  if (nextObstacle <= 0) {
+    spawnObstacle();
+    nextObstacle = 80 + Math.floor(Math.random() * 80) - Math.floor(score / 500) * 5;
+    nextObstacle = Math.max(nextObstacle, 45);
+  }
+
+  obstacles.forEach(o => { o.x -= speed; });
+  obstacles = obstacles.filter(o => o.x + o.w > -10);
+
+  for (const o of obstacles) {
+    if (checkCollision(o)) {
+      state = 'dead';
+      if (score > hiScore) hiScore = score;
+      document.getElementById('hiVal').textContent = hiScore;
+      document.getElementById('msg').textContent = '';
+      document.getElementById('subMsg').textContent = '';
+      bgm.pause();
+      birthdayActive = true;
+      birthdayAlpha = 0;
+      spawnBirthdayFX();
+      return;
+    }
+  }
+
+  document.getElementById('scoreVal').textContent = score;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.fillStyle = '#0a1f3d';
+  ctx.fillRect(0, 0, W, H);
+
+  drawStars();
+  clouds.forEach(drawCloud);
+  drawGround();
+
+  if (state === 'running' || state === 'idle') {
+    drawPlayer();
+    obstacles.forEach(drawObstacle);
+  } else if (state === 'dead') {
+    drawPlayer();
+    obstacles.forEach(drawObstacle);
+    ctx.fillStyle = 'rgba(233,69,96,0.18)';
+    ctx.fillRect(0, 0, W, H);
+    drawBirthdayOverlay();
+  }
+
+  if (state === 'idle') {
+    ctx.fillStyle = 'rgba(10,31,61,0.6)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#e94560';
+    ctx.font = 'bold 28px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('PRESS SPACE TO START', W / 2, H / 2);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '15px Courier New';
+    ctx.fillText('SPACE / ↑  to jump  |  double jump allowed', W / 2, H / 2 + 36);
+    ctx.textAlign = 'left';
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  animFrame = requestAnimationFrame(loop);
+}
+
+function handleJump() {
+  if (state === 'idle') {
+    state = 'running';
+    bgm.play().catch(() => {});
+    document.getElementById('msg').textContent = '';
+    document.getElementById('subMsg').textContent = '';
+    return;
+  }
+  if (state === 'dead') {
+    reset();
+    birthdayActive = false;
+    birthdayAlpha = 0;
+    state = 'running';
+    bgm.play().catch(() => {});
+    document.getElementById('msg').textContent = '';
+    document.getElementById('subMsg').textContent = '';
+    return;
+  }
+  if (state === 'running') {
+    player.jump();
+  }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    handleJump();
+  }
+});
+
+canvas.addEventListener('touchstart', e => { e.preventDefault(); handleJump(); }, { passive: false });
+canvas.addEventListener('click', handleJump);
+
+loop();
+</script>
+</body>
+</html>
